@@ -1,0 +1,19 @@
+main
+var a;
+array[12] d;
+{
+	let a <- call InputNum();
+	let d[5] <- 1000;
+	call OutputNum(d[5]);
+	while a <= 10 do
+		if a > 1 then
+			let d[5] <- a;
+		else
+			call OutputNum(d[5]);
+			call OutputNum(d[5] + a);
+		fi;
+		
+		let a <- a * 2;
+	od;
+	call OutputNum(d[5]);
+}.
