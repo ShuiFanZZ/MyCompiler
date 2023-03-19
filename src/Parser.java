@@ -587,6 +587,8 @@ public class Parser {
             instuctionID = BBManager.currentBlock.addInstruction("write",
                     Arrays.asList(getInstructionID(results.get(0))),
                     Arrays.asList(results.get(0).identifier));
+        }else if(functionName.equals("OutputNewLine")){
+            instuctionID = BBManager.currentBlock.addInstruction("writeNL");
         }
 
         return new Result(Result.Type.register, instuctionID);
@@ -971,8 +973,9 @@ public class Parser {
                 	while a > 0 do
                 		let a <- a - (10 + 10);
                 	od;
-                }.
-                
+                	call OutputNewLine();
+                }
+                . 
                 """;
         Tokenizer tokenizer = new Tokenizer(exp);
 
