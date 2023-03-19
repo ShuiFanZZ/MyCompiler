@@ -67,6 +67,7 @@ public class BasicBlockManager {
     public BasicBlock createWhileJoinBlock(){
         BasicBlock bb = createBlock();
         bb.is_while_join = true;
+        bb.is_inside_while = true;
         Instruction fake_kill = new Instruction(-1, "kill", Arrays.asList(-1), Arrays.asList(bb.name));
         fake_kill.next = bb.instructionTable.get("load");
         bb.instructionTable.put("load", fake_kill);
@@ -136,6 +137,7 @@ public class BasicBlockManager {
         followBlock.fall_through = previousBlock.fall_through;
         followBlock.join = previousBlock.join;
         followBlock.branch = previousBlock.branch;
+        followBlock.is_inside_while = previousBlock.is_inside_while;
 
         previousBlock.join = followBlock;
         previousBlock.fall_through = joinBlock;
@@ -273,7 +275,12 @@ public class BasicBlockManager {
             BasicBlock joinBlock = this.join;
             while(joinBlock  != null){
                 joinBlock.killAddress(array_addr);
+
+                if(joinBlock.is_while_join){
+                    joinBlock = joinBlock.join;
+                }
                 joinBlock = joinBlock.join;
+
             }
             int adda_id = addInstruction("adda", Arrays.asList(array_addr, off_set));
 
@@ -289,7 +296,7 @@ public class BasicBlockManager {
                 if(exist.name.equals("kill") && exist.params.get(0).equals(array_addr)){
                     break;
                 }
-                if(instruction.hash().equals(exist.hash())){
+                if(!exist.isRemoved && instruction.hash().equals(exist.hash())){
 
                     instruction.paramsInfo.add(String.valueOf(exist.id));
                     if(is_inside_while){
@@ -347,6 +354,8 @@ public class BasicBlockManager {
                         exist = exist.next;
 
                     }
+
+                    Instruction instruction_ll = exist;
                     if(exist != null) exist = exist.next;
                     while(exist != null){
                         if(exist.name.equals("kill") && exist.params.get(0).equals(array_addr)){
@@ -354,7 +363,8 @@ public class BasicBlockManager {
                         }
                         else if(exist.name.equals("load") &&
                                 exist.params.get(0).equals(array_addr) &&
-                                exist.params.get(1).equals(off_set))
+                                exist.params.get(1).equals(off_set) &&
+                                !exist.isRemoved)
                         {
                             repeated = true;
                             break;
@@ -364,6 +374,7 @@ public class BasicBlockManager {
 
                     if(repeated){
                         result.put(instruction.id, exist.id);
+                        instruction_ll.isRemoved = true;
                         instructions.get(i).isRemoved = true;
                         instructions.get(i-1).isRemoved = true;
                     }
