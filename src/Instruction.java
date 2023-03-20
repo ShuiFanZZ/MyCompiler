@@ -37,6 +37,7 @@ public class Instruction {
         this.name = name;
         this.constant = constant;
         this.isConstant = true;
+        this.paramsInfo = new ArrayList<>();
     }
 
     public boolean isEmpty(){

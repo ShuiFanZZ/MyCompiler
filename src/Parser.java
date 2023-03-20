@@ -343,20 +343,35 @@ public class Parser {
 
 
 
-        HashMap<String, int[]> variableChnageMap = new HashMap<>();// Variable : <old id, new id> in join block
+        HashMap<String, int[]> variableChnageMap = new HashMap<>();// Variable : <old id join, old id body, new id> in join block
+        List<String> dirtyVariables = new ArrayList<>();
         for(String var : joinBlock.variableMap.keySet()){
             if(bodyBlock.variableMap.containsKey(var)){
                 int addr1 = joinBlock.variableMap.get(var);
                 int addr2 = bodyBlock.variableMap.get(var);
                 if(addr1 != addr2){
 
-                    int addr3 = joinBlock.insertInstruction("phi", Arrays.asList(addr1, addr2));
+                    int addr3 = joinBlock.insertInstruction("phi", Arrays.asList(addr1, addr2), Arrays.asList(var, var));
                     joinBlock.variableMap.put(var, addr3);
-                    variableChnageMap.put(var, new int[]{addr1, addr3});
+                    variableChnageMap.put(var, new int[]{addr1, addr2, addr3});
+                }else if(bodyBlock.dirtyVariableMap.containsKey(var)){
+                    dirtyVariables.add(var);
+
                 }
             }
         }
+        for(String var: dirtyVariables){
+            String mark = bodyBlock.dirtyVariableMap.get(var);
+            int addr1 = joinBlock.variableMap.get(var);
+            int addr2 = bodyBlock.variableMap.get(var);
+            if(variableChnageMap.containsKey(mark)){
+                addr2 = variableChnageMap.get(mark)[2];
+            }
+            int addr3 = joinBlock.insertInstruction("phi", Arrays.asList(addr1, addr2), Arrays.asList(var, mark));
+            joinBlock.variableMap.put(var, addr3);
+            variableChnageMap.put(var, new int[]{addr1, addr2, addr3});
 
+        }
         Map<Integer, Integer> repeatedLoadsMap = joinBlock.findRepeatedLoadsInWhileJoin();
         // Substitute all instruction params that have been modified to corresponding phi functions
         for(Instruction instr : joinBlock.instructions){
@@ -366,9 +381,9 @@ public class Parser {
             }
             for(int i = 0; i < instr.params.size(); i++){
                 if(i < instr.paramsInfo.size() && variableChnageMap.containsKey(instr.paramsInfo.get(i))){
-                    int[] addr_pair = variableChnageMap.get(instr.paramsInfo.get(i));
-                    if(addr_pair[0] == instr.params.get(i)){
-                        newParams.add(addr_pair[1]);
+                    int[] adder_triple = variableChnageMap.get(instr.paramsInfo.get(i));
+                    if(adder_triple[0] == instr.params.get(i) || adder_triple[1] == instr.params.get(i)){
+                        newParams.add(adder_triple[2]);
                     }else{
                         newParams.add(instr.params.get(i));
                     }
@@ -378,9 +393,7 @@ public class Parser {
 
 
             }
-//            for(int param : instr.params){
-//                newParams.add(variableChnageMap.getOrDefault(param, param));
-//            }
+
             for(int i = 0; i < newParams.size(); i++){
                 if(repeatedLoadsMap.containsKey(newParams.get(i))){
                     newParams.set(i, repeatedLoadsMap.get(newParams.get(i)));
@@ -395,24 +408,23 @@ public class Parser {
             if(block.domBlocks.contains(joinBlock)){
                 // Update each variable in variable map if it is still using old values, skip if the value has been changed
                 for(String changed_var : variableChnageMap.keySet()){
-                    int old_val = variableChnageMap.get(changed_var)[0];
-                    int new_val = variableChnageMap.get(changed_var)[1];
+                    int old_val1 = variableChnageMap.get(changed_var)[0];
+                    int old_val2 = variableChnageMap.get(changed_var)[1];
+                    int new_val = variableChnageMap.get(changed_var)[2];
 
-                    if(block.variableMap.get(changed_var) == old_val){
+                    if(block.variableMap.get(changed_var) == old_val1){
                         block.variableMap.put(changed_var, new_val);
                     }
                 }
                 // Update the address of the instruction
                 for(Instruction instr : block.instructions){
                     List<Integer> newParams = new ArrayList<>();
-//                    for(int param : instr.params){
-//                        newParams.add(variableChnageMap.getOrDefault(param, param));
-//                    }
+
                     for(int i = 0; i < instr.params.size(); i++){
                         if(i < instr.paramsInfo.size() && variableChnageMap.containsKey(instr.paramsInfo.get(i))){
-                            int[] addr_pair = variableChnageMap.get(instr.paramsInfo.get(i));
-                            if(addr_pair[0] == instr.params.get(i)){
-                                newParams.add(addr_pair[1]);
+                            int[] adder_triple = variableChnageMap.get(instr.paramsInfo.get(i));
+                            if(adder_triple[0] == instr.params.get(i)){
+                                newParams.add(adder_triple[2]);
                             }else{
                                 newParams.add(instr.params.get(i));
                             }
@@ -544,8 +556,10 @@ public class Parser {
                 int addr1 = thenBlock.variableMap.get(var);
                 int addr2 = elseBlock.variableMap.get(var);
                 if(addr1 != addr2){
-                    int addr3 = joinBlock.addInstruction("phi", Arrays.asList(addr1, addr2));
+                    int addr3 = joinBlock.addInstruction("phi", Arrays.asList(addr2, addr1), Arrays.asList(var, var));
                     joinBlock.variableMap.put(var, addr3);
+                }else if(addr1 != ifBlock.variableMap.get(var)){
+                    joinBlock.variableMap.put(var, addr1);
                 }
             }
         }
@@ -612,6 +626,18 @@ public class Parser {
         Result result = expression();
         if(id_result.type == Result.Type.variable){
             BBManager.currentBlock.variableMap.put(identifier, getInstructionID(result));
+            if(BBManager.currentBlock.is_inside_while && result.type != Result.Type.register && !identifier.equals(result.identifier)){
+                String mark = "<Addr>";
+                if(result.type == Result.Type.variable){
+                    mark = result.identifier;
+                }
+                BBManager.currentBlock.dirtyVariableMap.put(identifier, mark);
+                BasicBlockManager.BasicBlock joinBlock = BBManager.currentBlock.join;
+                while(joinBlock != null && joinBlock.is_inside_while && !joinBlock.is_while_join){
+                    joinBlock.dirtyVariableMap.put(identifier, mark);
+                    joinBlock = joinBlock.join;
+                }
+            }
         }
         else if(id_result.type == Result.Type.array){
             BBManager.currentBlock.addInstruction("store", Arrays.asList(getInstructionID(result), id_result.value, id_result.offset));
@@ -790,17 +816,6 @@ public class Parser {
         if(token.type == Tokenizer.TokenType.IDENTIFIER){
             result = designator();
 
-//            if(BBManager.constantInstructionMap.containsKey(result.value)){
-//                result = new Result(Result.Type.constant, BBManager.constantInstructionMap.get(result.value));
-//            }else if(result.value == 0){
-//                result = new Result(Result.Type.constant, 0);
-//            }
-
-//            if(Result.Type.array == result.type){
-//                result.value = BBManager.currentBlock.addInstruction("load", Arrays.asList(result.value));
-//                result.type = Result.Type.register;
-//                result.identifier = "<Addr>";
-//            }
 
         }else if(token.type == Tokenizer.TokenType.NUMBER){
             result = new Result(Result.Type.constant, Integer.parseInt(token.value));
@@ -836,12 +851,14 @@ public class Parser {
         result.type = Result.Type.array;
 
         List<Integer> dimension_addr = new ArrayList<>();
+        List<String> dimension_identifier = new ArrayList<>();
         while(token.type == Tokenizer.TokenType.BRACKET_LEFT){
             next();
 
             Result r = expression();
             int addr2 = getInstructionID(r);
             dimension_addr.add(addr2);
+            dimension_identifier.add(r.identifier);
 
 
             if(token.type == Tokenizer.TokenType.BRACKET_RIGHT){
@@ -850,7 +867,7 @@ public class Parser {
 
         }
 
-        int[] array_addr = findArrayAddress(identifier, dimension_addr);
+        int[] array_addr = findArrayAddress(identifier, dimension_addr, dimension_identifier);
         result.value = array_addr[0];
         result.offset = array_addr[1];
 
@@ -865,27 +882,22 @@ public class Parser {
         return hashBuilder.toString();
     }
 
-    private int[] findArrayAddress(String identifier, List<Integer> dim_addresses){
-
-        // TODO: decide whether to add a hashmap
-//        String hash = hashArrayElement(identifier, dim_addresses);
-//        if(BBManager.currentBlock.variableMap.containsKey(hash)){
-//            return BBManager.currentBlock.variableMap.get(hash);
-//        }
+    private int[] findArrayAddress(String identifier, List<Integer> dim_addresses, List<String> dim_var){
 
         List<Integer> dimensions = arrayDimensionsMap.get(identifier);
         int d = 1;
         int addr1 = 0;
-
-        for(int dim_address : dim_addresses){
-            int addr2 = dim_address;
+        for(int index = 0; index < dim_addresses.size(); index ++){
+        //for(int dim_address : dim_addresses){
+            int addr2 = dim_addresses.get(index);
+            String var = dim_var.get(index);
             int multiplier = 1;
             for(int i = d; i < dimensions.size(); i++){
                 multiplier *= dimensions.get(i);
             }
             if(multiplier > 1){
                 int multiplier_addr = BBManager.addConstant(multiplier);
-                addr2 = BBManager.currentBlock.addInstruction("mul", Arrays.asList(addr2, multiplier_addr));
+                addr2 = BBManager.currentBlock.addInstruction("mul", Arrays.asList(addr2, multiplier_addr), Arrays.asList(var, "<Addr>"));
             }
             if(addr1 == 0){
                 addr1 = addr2;
@@ -897,9 +909,13 @@ public class Parser {
         }
 
         int multiplier_addr = BBManager.addConstant(4);
-        int off_set = BBManager.currentBlock.addInstruction("mul", Arrays.asList(addr1, multiplier_addr));
+        List<String> off_set_paramInfo = Arrays.asList("<Addr>", "<Addr>");
+        int off_set = BBManager.currentBlock.addInstruction("mul", Arrays.asList(addr1, multiplier_addr), off_set_paramInfo);
+        if(addr1 == dim_addresses.get(0)){
+            off_set_paramInfo.set(0, dim_var.get(0));
+        }
         int base_addr = BBManager.currentBlock.addInstruction("add (BASE)", Arrays.asList(BBManager.constantBlock.getVariableAddress(identifier)));
-        //int addr = BBManager.currentBlock.addInstruction("adda", Arrays.asList(base_addr, off_set));
+
         return new int[]{base_addr, off_set};
     }
 
@@ -924,45 +940,7 @@ public class Parser {
     }
 
     public static void main(String[] args){
-//        System.out.println("Enter your expression (press ENTER to finish):");
-//        Scanner scanner = new Scanner(System.in);
-//        String exp = scanner.nextLine();
-//
-//        String exp = """
-//                        main\s
-//                        var a, b, c, d, e; {\s
-//                           let a <- call InputNum();\s
-//                           let b <- a;\s
-//                           let c <- 1;\s
-//                           let d <- b + c ;\s
-//                           let e <- a + b;\s
-//                           if 1<0
-//                           then
-//                               let d<-a+b;
-//
-//                           else
-//                                let d<-b+c;
-//                                if e > 1 then
-//                                    let c<-e+d;
-//                                else
-//                                    let e<-c;
-//                                fi;
-//
-//                           fi;
-//                           call OutputNum(a*b)\s
-//                        }.\s
-//                """;
 
-//        String exp = """
-//                        main\s
-//                        var a, b, c, d, e; {\s
-//                           let a <- call InputNum();\s
-//                           let b <- 2;\s
-//                           let c <- 1;\s
-//                           let d <- b+c;
-//                           call OutputNum(a*d)\s
-//                        }.\s
-//                """;
 
         String exp = """
                 main

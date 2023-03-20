@@ -6,7 +6,7 @@ public class BasicBlockManager {
     public BasicBlock currentBlock;
     public BasicBlock pseudoBlock;
     public int numBlocks = 2;
-    public int instructionIDPtr = 1;
+    public int instructionIDPtr = 0;
     public Map<Integer, Integer> constantInstructionMap = new HashMap<>();
 
 
@@ -19,6 +19,7 @@ public class BasicBlockManager {
 
         this.pseudoBlock = new BasicBlock("PseudoBlock", this);
         this.pseudoBlock.skip_mode = true;
+        addConstant(0);
     }
 
     public String toGraph(){
@@ -61,6 +62,7 @@ public class BasicBlockManager {
         bb.variableMap = new HashMap<>(currentBlock.variableMap);
         bb.invalidatedAddressSet = new HashSet<>(currentBlock.invalidatedAddressSet);
         bb.is_inside_while = currentBlock.is_inside_while;
+
         return bb;
     }
 
@@ -96,11 +98,11 @@ public class BasicBlockManager {
             return;
         }
 
-        //joinBlock.name = "join\\n" + joinBlock.name;
 
         joinBlock.fall_through = currentBlock.fall_through;
         joinBlock.branch = currentBlock.branch;
         joinBlock.join = currentBlock.join;
+        joinBlock.dirtyVariableMap = new HashMap<>(currentBlock.dirtyVariableMap);
 
         currentBlock.branch = elseBlock;
         currentBlock.fall_through = thenBlock;
@@ -111,21 +113,7 @@ public class BasicBlockManager {
         elseBlock.fall_through = joinBlock;
         elseBlock.join = joinBlock;
 
-//        elseBlock.domBlocks = new ArrayList<>(currentBlock.domBlocks);
-//        elseBlock.domBlocks.add(currentBlock);
-//        thenBlock.domBlocks = new ArrayList<>(currentBlock.domBlocks);
-//        thenBlock.domBlocks.add(currentBlock);
-//        joinBlock.domBlocks = new ArrayList<>(currentBlock.domBlocks);
-//        joinBlock.domBlocks.add(currentBlock);
-//
-//        elseBlock.instructionTable = new HashMap<>(currentBlock.instructionTable);
-//        thenBlock.instructionTable = new HashMap<>(currentBlock.instructionTable);
-//        joinBlock.instructionTable = new HashMap<>(currentBlock.instructionTable);
-//
-//
-//        thenBlock.variableMap = new HashMap<>(currentBlock.variableMap);
-//        elseBlock.variableMap = new HashMap<>(currentBlock.variableMap);
-//        joinBlock.variableMap = new HashMap<>(currentBlock.variableMap);
+
     }
 
 
@@ -149,13 +137,12 @@ public class BasicBlockManager {
         joinBlock.is_while_join = true;
         joinBlock.is_inside_while = true;
 
-        bodyBlock.fall_through = joinBlock;
+        bodyBlock.fall_through = null;
         bodyBlock.join = joinBlock;
-        bodyBlock.branch = null;
+        bodyBlock.branch = joinBlock;
         bodyBlock.is_inside_while = true;
 
-//        followBlock.domBlocks.add(joinBlock);
-//        bodyBlock.domBlocks.add(joinBlock);
+
     }
 
 
@@ -177,6 +164,7 @@ public class BasicBlockManager {
         boolean is_while_join = false;
         boolean is_inside_while = false;
         HashSet<Integer> invalidatedAddressSet = new HashSet<>();
+        int insertPtr = 0;
 
         Map<String, Instruction> instructionTable = new HashMap<>(){{
             put("add", null);
@@ -188,8 +176,10 @@ public class BasicBlockManager {
             put("add (BASE)", null);
             put("load", null);
         }};
+        Instruction storeInstructions = null;
 
         public Map<String, Integer> variableMap = new HashMap<>();
+        public Map<String, String> dirtyVariableMap = new HashMap<>();
 
         BasicBlockManager BBManager;
         List<BasicBlock> domBlocks = new ArrayList<>();
@@ -208,6 +198,10 @@ public class BasicBlockManager {
 
         public int insertInstruction(String name, List<Integer> params){
             return addInstruction(new Instruction(BBManager.instructionIDPtr, name, params), true);
+        }
+
+        public int insertInstruction(String name, List<Integer> params, List<String> paramsInfo){
+            return addInstruction(new Instruction(BBManager.instructionIDPtr, name, params, paramsInfo), true);
         }
 
         public int addInstruction(String name, List<Integer> params){
@@ -257,7 +251,8 @@ public class BasicBlockManager {
                 return instruction.id;
             }else {
                 if(insertFirst){
-                   instructions.add(0, instruction);
+                   instructions.add(insertPtr, instruction);
+                   insertPtr++;
                 }else{
                     instructions.add(instruction);
                 }
@@ -270,6 +265,28 @@ public class BasicBlockManager {
             int value_addr = instruction.params.get(0);
             int array_addr = instruction.params.get(1);
             int off_set = instruction.params.get(2);
+
+            Instruction previous_store = storeInstructions;
+
+            while(previous_store != null){
+                if(previous_store.params.get(1).equals(array_addr)){
+                    if(previous_store.params.get(0).equals(value_addr) &&
+                        previous_store.params.get(2).equals(off_set))
+                    {
+                        return previous_store.id;
+                    }else if(previous_store.params.get(0).equals(value_addr)){
+                        previous_store = previous_store.next;
+                        continue;
+                    }
+                    else{
+                        break;
+                    }
+                }
+                previous_store = previous_store.next;
+            }
+            instruction.next = storeInstructions;
+            storeInstructions = instruction;
+
             killAddress(array_addr);
             // Kill the address in the join block as well
             BasicBlock joinBlock = this.join;
@@ -284,7 +301,9 @@ public class BasicBlockManager {
             }
             int adda_id = addInstruction("adda", Arrays.asList(array_addr, off_set));
 
-            return addInstruction("store", Arrays.asList(value_addr, adda_id));
+            int instructionId = addInstruction("store", Arrays.asList(value_addr, adda_id));
+            instruction.id = instructionId;
+            return instructionId;
         }
 
         public int addLoadInstruction(Instruction instruction){
@@ -428,7 +447,14 @@ public class BasicBlockManager {
 
             while(exist != null){
                 if(instruction.hash().equals(exist.hash())){
-                    return exist.id;
+                    if(is_inside_while){
+                        if(instruction.paramsInfo.equals(exist.paramsInfo)){
+                            return exist.id;
+                        }
+                    }else{
+                        return exist.id;
+                    }
+
                 }
 
                 exist = exist.next;
