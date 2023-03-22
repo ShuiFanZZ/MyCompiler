@@ -910,10 +910,11 @@ public class Parser {
 
         int multiplier_addr = BBManager.addConstant(4);
         List<String> off_set_paramInfo = Arrays.asList("<Addr>", "<Addr>");
-        int off_set = BBManager.currentBlock.addInstruction("mul", Arrays.asList(addr1, multiplier_addr), off_set_paramInfo);
         if(addr1 == dim_addresses.get(0)){
             off_set_paramInfo.set(0, dim_var.get(0));
         }
+        int off_set = BBManager.currentBlock.addInstruction("mul", Arrays.asList(addr1, multiplier_addr), off_set_paramInfo);
+
         int base_addr = BBManager.currentBlock.addInstruction("add (BASE)", Arrays.asList(BBManager.constantBlock.getVariableAddress(identifier)));
 
         return new int[]{base_addr, off_set};
